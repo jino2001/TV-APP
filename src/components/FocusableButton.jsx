@@ -1,4 +1,6 @@
-export default function FocusableButton({
+import { memo } from "react";
+
+function FocusableButton({
   children,
   className = "",
   variant = "primary",
@@ -15,3 +17,5 @@ export default function FocusableButton({
     </button>
   );
 }
+
+export default memo(FocusableButton);

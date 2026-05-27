@@ -1,22 +1,17 @@
 import { useEffect } from "react";
-import { TV_NAVIGATION_THROTTLE_MS } from "../config/performance.js";
+import {
+  getRemoteKey,
+  handledRemoteActions,
+  REMOTE_THROTTLE_MS,
+} from "../utils/remoteKeys.js";
 
 const focusableSelector = '[data-tv-focusable="true"]';
 const focusedClassName = "is-focused";
-const handledKeys = new Set([
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  "Enter",
-  "Backspace",
-  "Escape",
-]);
 const keyMap = {
-  ArrowLeft: "left",
-  ArrowRight: "right",
-  ArrowUp: "up",
-  ArrowDown: "down",
+  LEFT: "left",
+  RIGHT: "right",
+  UP: "up",
+  DOWN: "down",
 };
 
 function getFocusableElements() {
@@ -25,6 +20,17 @@ function getFocusableElements() {
       !element.hasAttribute("disabled") &&
       element.getAttribute("aria-hidden") !== "true" &&
       element.offsetParent !== null,
+  );
+}
+
+function getInitialFocusableElement() {
+  const elements = getFocusableElements();
+
+  return (
+    elements.find((element) => element.dataset.tvAutofocus === "true") ??
+    elements.find((element) => element.closest("main")) ??
+    elements[0] ??
+    null
   );
 }
 
@@ -88,18 +94,27 @@ function findNextElement(currentElement, direction) {
   return candidates[0]?.element ?? currentElement;
 }
 
-export function useSpatialNavigation(onBack, routeKey) {
+export function useSpatialNavigation(onBack, routeKey, enabled = true) {
   useEffect(() => {
+    if (!enabled) {
+      clearFocusedClass();
+      return undefined;
+    }
+
     const focusFirstElement = window.setTimeout(() => {
-      const firstElement = getFocusableElements()[0];
+      const firstElement = getInitialFocusableElement();
       firstElement?.focus({ preventScroll: true });
       markFocusedElement(firstElement);
     }, 30);
 
     return () => window.clearTimeout(focusFirstElement);
-  }, [routeKey]);
+  }, [enabled, routeKey]);
 
   useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+
     let lastArrowEventAt = 0;
     let lastScrolledElement = null;
     let lastScrollAt = 0;
@@ -117,23 +132,32 @@ export function useSpatialNavigation(onBack, routeKey) {
     }
 
     function handleKeyDown(event) {
-      if (!handledKeys.has(event.key)) {
+      const remoteKey = getRemoteKey(event);
+
+      if (!remoteKey || !handledRemoteActions.has(remoteKey.action)) {
+        return;
+      }
+
+      if (remoteKey.action === "NUMBER" || remoteKey.action.startsWith("CHANNEL")) {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
 
-      if (event.key in keyMap) {
+      if (remoteKey.action in keyMap) {
         const now = performance.now();
 
-        if (now - lastArrowEventAt < TV_NAVIGATION_THROTTLE_MS) {
+        if (now - lastArrowEventAt < REMOTE_THROTTLE_MS) {
           return;
         }
 
         lastArrowEventAt = now;
 
-        const nextElement = findNextElement(document.activeElement, keyMap[event.key]);
+        const nextElement = findNextElement(
+          document.activeElement,
+          keyMap[remoteKey.action],
+        );
 
         if (!nextElement || nextElement === document.activeElement) {
           return;
@@ -155,7 +179,7 @@ export function useSpatialNavigation(onBack, routeKey) {
         return;
       }
 
-      if (event.key === "Enter") {
+      if (remoteKey.action === "ENTER") {
         const activeElement = document.activeElement;
 
         if (activeElement?.matches?.(focusableSelector)) {
@@ -165,7 +189,7 @@ export function useSpatialNavigation(onBack, routeKey) {
         return;
       }
 
-      if (event.key === "Backspace" || event.key === "Escape") {
+      if (remoteKey.action === "BACK") {
         onBack();
       }
     }
@@ -179,5 +203,5 @@ export function useSpatialNavigation(onBack, routeKey) {
       document.removeEventListener("focusout", handleFocusOut);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onBack]);
+  }, [enabled, onBack]);
 }

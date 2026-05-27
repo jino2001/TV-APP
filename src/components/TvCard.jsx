@@ -13,7 +13,7 @@ function getBadgeText(item) {
   return item.isFavorite ? "Favorite" : contentTypeLabels[item.type];
 }
 
-function TvCard({ item, onSelect, size = "default" }) {
+function TvCard({ autoFocus = false, item, onSelect, size = "default" }) {
   const colors = getContentColors(item);
   const playable = isPlayableItem(item);
   const initials = useMemo(
@@ -38,9 +38,10 @@ function TvCard({ item, onSelect, size = "default" }) {
     <button
       type="button"
       data-tv-focusable="true"
+      data-tv-autofocus={autoFocus ? "true" : undefined}
       className={`tv-card tv-card--${size} ${playable ? "" : "tv-card--inactive"}`}
       onClick={() => onSelect(item.id)}
-      aria-label={`Open ${item.title} details`}
+      aria-label={`Channel ${item.channelNumber}: ${item.title}`}
       style={style}
     >
       <span className="poster-art" aria-hidden="true">
@@ -57,18 +58,22 @@ function TvCard({ item, onSelect, size = "default" }) {
           />
         )}
         <span className="poster-shine" />
+        {item.channelNumber && (
+          <span className="channel-number-badge">{item.channelNumber}</span>
+        )}
         <span
           className={`card-badge ${playable ? "card-badge--live" : "card-badge--unavailable"}`}
         >
           {getBadgeText(item)}
         </span>
+        {item.isFavorite && <span className="favorite-marker">FAV</span>}
         <span className="poster-initials">{initials}</span>
       </span>
 
       <span className="card-copy">
         <span className="card-title">{item.title}</span>
         <span className="card-meta">
-          {contentTypeLabels[item.type]} / {item.category}
+          Channel {item.channelNumber} / {contentTypeLabels[item.type]}
         </span>
       </span>
 

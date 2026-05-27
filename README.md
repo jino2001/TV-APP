@@ -45,6 +45,7 @@ Use `.m3u8` for HLS streams or a direct video URL such as `.mp4`. Add `backupStr
 
 - This app uses local `.m3u8` stream URLs from `src/data/content.js`.
 - Some streams use `http://` and may work locally but fail after HTTPS deployment because browsers block mixed content.
+- Some stream URLs contain temporary tokens. If a channel stops working, the token may have expired and the stream URL should be refreshed.
 - Some streams may fail because of CORS, geo-blocking, server downtime, or unsupported codecs.
 - In development, the Player includes `Use Test Stream` and `Next Source` buttons for debugging.
 - Test streams first in VLC, then in the browser app.
@@ -86,6 +87,32 @@ npm run android:build
 
 The debug APK is created under `android/app/build/outputs/apk/debug/` when the Android SDK and JDK are installed. The Android manifest includes both `LAUNCHER` and `LEANBACK_LAUNCHER`, optional touchscreen support, leanback support, landscape orientation, fullscreen mode, and internet permission.
 
+## Android TV App Features
+
+- Splash screen with lightweight channel loading state.
+- Clean 5-channel Home screen.
+- Number buttons 1-5 open channels directly.
+- Channel zapping in Player with ArrowUp / ArrowDown.
+- Minimal Player overlay with channel title, LIVE badge, current time, Back, and Retry.
+- Fullscreen Android TV behavior with page scrolling disabled and large focus states.
+
+## Channel List
+
+1 - First Channel / 1TV
+2 - Imedi TV
+3 - Formula TV
+4 - TV Pirveli
+5 - Silk Universal
+
+## TV Controls
+
+- Number buttons `1`-`5` open channels directly.
+- ArrowUp / ArrowDown switch channels inside Player.
+- ChannelUp / ChannelDown switch channels if supported by the remote.
+- Enter or Space toggles play/pause.
+- Back returns to Home.
+- Tokenized stream URLs may expire and need to be refreshed.
+
 ### Build APK With GitHub Actions
 
 Push this project to GitHub, then open:
@@ -102,7 +129,3 @@ When the workflow finishes, download the `personal-tv-debug-apk` artifact. It co
 - Keyboard/remote navigation supports arrows, Enter, Space, Backspace, and Escape.
 - HLS playback uses native browser support when available and falls back to `hls.js`.
 - This is intentionally personal-use focused and backend-free.
-"# TV-APP" 
-"# TV-APP" 
-"# TV-APP" 
-"# TV-APP" 

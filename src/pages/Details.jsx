@@ -1,12 +1,8 @@
-import ContentRow from "../components/ContentRow.jsx";
 import FocusableButton from "../components/FocusableButton.jsx";
 import {
   contentTypeLabels,
   getContentColors,
-  getPlaybackType,
   isPlayableItem,
-  playbackActionLabels,
-  playbackTypeLabels,
 } from "../data/content.js";
 import { getContentById } from "../utils/contentUtils.js";
 
@@ -14,23 +10,33 @@ export default function Details({
   contentItems,
   contentId,
   onBack,
-  onOpenDetails,
   onPlay,
   onToggleFavorite,
 }) {
-  const content = getContentById(contentId, contentItems) ?? contentItems[0];
+  const content = getContentById(contentId, contentItems);
+
+  if (!content) {
+    return (
+      <div className="details-page">
+        <section className="details-hero details-hero--missing">
+          <div className="details-copy">
+            <span className="eyebrow">Unavailable</span>
+            <h1>Channel not found</h1>
+            <p className="description">
+              This item is not available in local content data.
+            </p>
+            <div className="button-group">
+              <FocusableButton variant="secondary" onClick={onBack}>
+                Back
+              </FocusableButton>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   const playable = isPlayableItem(content);
-  const playbackType = getPlaybackType(content);
-  const streamKind = playbackTypeLabels[playbackType] ?? "Unknown Player";
-  const playButtonText = playbackActionLabels[playbackType] ?? "Play";
-
-  const relatedItems = contentItems.filter(
-    (item) => item.id !== content.id && item.category === content.category,
-  );
-
-  const fallbackItems = contentItems
-    .filter((item) => item.id !== content.id)
-    .slice(0, 4);
   const colors = getContentColors(content);
 
   return (
@@ -64,28 +70,29 @@ export default function Details({
               }}
             />
           )}
+          {content.channelNumber && (
+            <span className="details-channel-number">
+              {content.channelNumber}
+            </span>
+          )}
           <span>{content.title}</span>
         </div>
 
         <div className="details-copy">
-          <span className="eyebrow">{content.category}</span>
+          <span className="eyebrow">Channel {content.channelNumber}</span>
           <h1>{content.title}</h1>
           <div className="hero-meta">
             <span>{contentTypeLabels[content.type]}</span>
-            <span>{content.category}</span>
+            <span>LIVE</span>
             {content.epgId && <span>{content.epgId}</span>}
-            <span>{playable ? "LIVE" : "Unavailable"}</span>
+            <span>{content.category}</span>
             {content.isFavorite && <span>Favorite</span>}
-            {content.streamUrl && <span>{streamKind}</span>}
           </div>
           <p className="description">{content.description}</p>
-          <p className={`stream-url ${playable ? "" : "stream-url--missing"}`}>
-            {content.streamUrl ?? "This channel is currently unavailable."}
-          </p>
 
           {!playable && (
             <p className="unavailable-message">
-              This channel is currently unavailable.
+              Stream could not be loaded. Try again or choose another channel.
             </p>
           )}
 
@@ -94,7 +101,7 @@ export default function Details({
               disabled={!playable}
               onClick={() => onPlay(content.id)}
             >
-              {playButtonText}
+              Watch Live
             </FocusableButton>
             <FocusableButton
               variant={content.isFavorite ? "secondary" : "primary"}
@@ -108,12 +115,6 @@ export default function Details({
           </div>
         </div>
       </section>
-
-      <ContentRow
-        title={relatedItems.length > 0 ? "More Like This" : "More To Watch"}
-        items={relatedItems.length > 0 ? relatedItems : fallbackItems}
-        onSelect={onOpenDetails}
-      />
     </div>
   );
 }

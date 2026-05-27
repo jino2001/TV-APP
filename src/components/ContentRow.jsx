@@ -1,11 +1,21 @@
 import { memo, useMemo } from "react";
 import TvCard from "./TvCard.jsx";
 
-function ContentRow({ title, items, onSelect }) {
+function ContentRow({
+  autoFocusFirst = false,
+  title,
+  items,
+  onSelect,
+  size = "default",
+}) {
   const rowId = useMemo(
     () => `${title.toLowerCase().replace(/\s+/g, "-")}-row`,
     [title],
   );
+
+  if (items.length === 0) {
+    return null;
+  }
 
   return (
     <section className="content-row" aria-labelledby={rowId}>
@@ -15,16 +25,15 @@ function ContentRow({ title, items, onSelect }) {
       </div>
 
       <div className="row-scroller">
-        {items.length > 0 ? (
-          items.map((item) => (
-            <TvCard key={item.id} item={item} onSelect={onSelect} />
-          ))
-        ) : (
-          <div className="empty-row">
-            <strong>No favorites yet</strong>
-            <span>Open any item and add it to Favorites.</span>
-          </div>
-        )}
+        {items.map((item, index) => (
+          <TvCard
+            key={item.id}
+            autoFocus={autoFocusFirst && index === 0}
+            item={item}
+            onSelect={onSelect}
+            size={size}
+          />
+        ))}
       </div>
     </section>
   );

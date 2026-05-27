@@ -1,135 +1,133 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import ChannelNumberOverlay from "./components/ChannelNumberOverlay.jsx";
 import Header from "./components/Header.jsx";
 import Home from "./pages/Home.jsx";
-import Details from "./pages/Details.jsx";
 import Player from "./pages/Player.jsx";
+import SplashScreen from "./pages/SplashScreen.jsx";
 import { TV_PERFORMANCE_MODE } from "./config/performance.js";
-import { contentItems, isPlayableItem } from "./data/content.js";
+import { contentItems } from "./data/content.js";
 import { useSpatialNavigation } from "./hooks/useSpatialNavigation.js";
-
-const FAVORITES_STORAGE_KEY = "personal-tv-favorites";
-const defaultFavoriteIds = contentItems
-  .filter((item) => item.isFavorite)
-  .map((item) => item.id);
-const contentIdSet = new Set(contentItems.map((item) => item.id));
-
-function readFavoriteIds() {
-  if (typeof window === "undefined") {
-    return defaultFavoriteIds;
-  }
-
-  try {
-    const savedValue = window.localStorage.getItem(FAVORITES_STORAGE_KEY);
-
-    if (!savedValue) {
-      return defaultFavoriteIds;
-    }
-
-    const parsedValue = JSON.parse(savedValue);
-
-    if (!Array.isArray(parsedValue)) {
-      return defaultFavoriteIds;
-    }
-
-    return parsedValue.filter((id) => contentIdSet.has(id));
-  } catch {
-    return defaultFavoriteIds;
-  }
-}
-
-function saveFavoriteIds(favoriteIds) {
-  try {
-    window.localStorage.setItem(
-      FAVORITES_STORAGE_KEY,
-      JSON.stringify(favoriteIds),
-    );
-  } catch {
-    // Favorites still update for the current session if storage is unavailable.
-  }
-}
+import { getActiveChannels, getChannelByNumber } from "./utils/channelUtils.js";
+import { getRemoteKey, handledRemoteActions } from "./utils/remoteKeys.js";
 
 export default function App() {
   const [screen, setScreen] = useState({ page: "home", contentId: null });
-  const [, setHistory] = useState([]);
-  const [favoriteIds, setFavoriteIds] = useState(readFavoriteIds);
+  const [isSplashVisible, setIsSplashVisible] = useState(true);
+  const [numberOverlay, setNumberOverlay] = useState({
+    visible: false,
+    digit: "",
+    channel: null,
+    message: "",
+  });
   const isPlayerScreen = screen.page === "player";
-
-  const favoriteIdSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
-  const contentWithFavorites = useMemo(
-    () =>
-      contentItems.map((item) => ({
-        ...item,
-        isFavorite: favoriteIdSet.has(item.id),
-      })),
-    [favoriteIdSet],
-  );
-
-  const activeContent = useMemo(
-    () =>
-      contentWithFavorites.find((item) => item.id === screen.contentId) ??
-      contentWithFavorites[0],
-    [contentWithFavorites, screen.contentId],
-  );
-
-  const openScreen = useCallback((nextScreen) => {
-    setHistory((previous) => [...previous, screen]);
-    setScreen(nextScreen);
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [screen]);
+  const channels = useMemo(() => getActiveChannels(contentItems), []);
 
   const goHome = useCallback(() => {
-    setHistory((previous) => [...previous, screen]);
     setScreen({ page: "home", contentId: null });
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [screen]);
+  }, []);
 
-  const goBack = useCallback(() => {
-    if (screen.page === "home") {
-      return;
-    }
-
-    setHistory((previous) => {
-      const nextHistory = previous.slice(0, -1);
-      const previousScreen =
-        previous[previous.length - 1] ?? { page: "home", contentId: null };
-      setScreen(previousScreen);
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-      return nextHistory;
-    });
-  }, [screen.page]);
-
-  useSpatialNavigation(goBack, `${screen.page}-${screen.contentId ?? "home"}`);
-
-  const showDetails = useCallback(
-    (contentId) => openScreen({ page: "details", contentId }),
-    [openScreen],
-  );
-
-  const playContent = useCallback(
+  const playChannel = useCallback(
     (contentId) => {
-      const targetContent = contentWithFavorites.find(
-        (item) => item.id === contentId,
-      );
-
-      if (!isPlayableItem(targetContent)) {
+      if (!channels.some((channel) => channel.id === contentId)) {
         return;
       }
 
-      openScreen({ page: "player", contentId });
+      setScreen({ page: "player", contentId });
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     },
-    [contentWithFavorites, openScreen],
+    [channels],
   );
 
-  const toggleFavorite = useCallback((contentId) => {
-    setFavoriteIds((currentIds) => {
-      const nextIds = currentIds.includes(contentId)
-        ? currentIds.filter((id) => id !== contentId)
-        : [...currentIds, contentId];
-
-      saveFavoriteIds(nextIds);
-      return nextIds;
+  const showNumberOverlay = useCallback((digit, channel) => {
+    setNumberOverlay({
+      visible: true,
+      digit,
+      channel,
+      message: channel ? "" : "Channel not found",
     });
   }, []);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      setIsSplashVisible(false);
+    }, 900);
+
+    return () => window.clearTimeout(timerId);
+  }, []);
+
+  useEffect(() => {
+    if (!numberOverlay.visible) {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setNumberOverlay((currentOverlay) => ({
+        ...currentOverlay,
+        visible: false,
+      }));
+    }, 1500);
+
+    return () => window.clearTimeout(timerId);
+  }, [numberOverlay.visible]);
+
+  useEffect(() => {
+    if (isSplashVisible || isPlayerScreen) {
+      return undefined;
+    }
+
+    function handleNumericKey(event) {
+      const remoteKey = getRemoteKey(event);
+
+      if (!remoteKey || !handledRemoteActions.has(remoteKey.action)) {
+        return;
+      }
+
+      if (remoteKey.action !== "NUMBER") {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const channel = getChannelByNumber(remoteKey.digit, channels);
+      showNumberOverlay(remoteKey.digit, channel);
+
+      if (channel) {
+        playChannel(channel.id);
+      }
+    }
+
+    window.addEventListener("keydown", handleNumericKey, true);
+
+    return () => {
+      window.removeEventListener("keydown", handleNumericKey, true);
+    };
+  }, [
+    channels,
+    isPlayerScreen,
+    isSplashVisible,
+    playChannel,
+    showNumberOverlay,
+  ]);
+
+  useSpatialNavigation(
+    goHome,
+    `${screen.page}-${screen.contentId ?? "home"}`,
+    !isPlayerScreen && !isSplashVisible,
+  );
+
+  if (isSplashVisible) {
+    return (
+      <div
+        className={`tv-app tv-app--splash ${
+          TV_PERFORMANCE_MODE ? "tv-app--performance" : ""
+        }`}
+      >
+        <SplashScreen />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -141,32 +139,27 @@ export default function App() {
 
       <main className={`tv-main ${isPlayerScreen ? "tv-main--player" : ""}`}>
         {screen.page === "home" && (
-          <Home
-            contentItems={contentWithFavorites}
-            onOpenDetails={showDetails}
-          />
-        )}
-
-        {screen.page === "details" && (
-          <Details
-            contentItems={contentWithFavorites}
-            contentId={screen.contentId}
-            onToggleFavorite={toggleFavorite}
-            onBack={goHome}
-            onOpenDetails={showDetails}
-            onPlay={playContent}
-          />
+          <Home contentItems={channels} onPlay={playChannel} />
         )}
 
         {screen.page === "player" && (
           <Player
-            key={activeContent.id}
             contentId={screen.contentId}
-            contentItems={contentWithFavorites}
-            onBack={goBack}
+            contentItems={channels}
+            onBack={goHome}
+            onSwitchChannel={playChannel}
           />
         )}
       </main>
+
+      {!isPlayerScreen && (
+        <ChannelNumberOverlay
+          channel={numberOverlay.channel}
+          digit={numberOverlay.digit}
+          message={numberOverlay.message}
+          visible={numberOverlay.visible}
+        />
+      )}
     </div>
   );
 }
