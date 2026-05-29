@@ -53,6 +53,35 @@ function centerOf(element) {
   };
 }
 
+function scrollWithinContainer(element) {
+  const container = element?.closest?.("[data-tv-scroll-container='true']");
+
+  if (!container) {
+    return false;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const styles = window.getComputedStyle(container);
+  const scrollPaddingTop = Number.parseFloat(styles.scrollPaddingTop) || 12;
+  const scrollPaddingBottom =
+    Number.parseFloat(styles.scrollPaddingBottom) || 12;
+  const topEdge = containerRect.top + scrollPaddingTop;
+  const bottomEdge = containerRect.bottom - scrollPaddingBottom;
+
+  if (elementRect.top < topEdge) {
+    container.scrollTop -= topEdge - elementRect.top;
+    return true;
+  }
+
+  if (elementRect.bottom > bottomEdge) {
+    container.scrollTop += elementRect.bottom - bottomEdge;
+    return true;
+  }
+
+  return true;
+}
+
 function findNextElement(currentElement, direction) {
   const elements = getFocusableElements();
 
@@ -105,6 +134,9 @@ export function useSpatialNavigation(onBack, routeKey, enabled = true) {
       const firstElement = getInitialFocusableElement();
       firstElement?.focus({ preventScroll: true });
       markFocusedElement(firstElement);
+      firstElement
+        ?.closest?.("[data-tv-scroll-container='true']")
+        ?.scrollTo({ top: 0, behavior: "auto" });
     }, 30);
 
     return () => window.clearTimeout(focusFirstElement);
@@ -166,17 +198,17 @@ export function useSpatialNavigation(onBack, routeKey, enabled = true) {
         nextElement?.focus({ preventScroll: true });
         markFocusedElement(nextElement);
 
-        if (
-          !nextElement.closest(".home-page--simple") &&
-          (lastScrolledElement !== nextElement || now - lastScrollAt > 320)
-        ) {
+        if (lastScrolledElement !== nextElement || now - lastScrollAt > 320) {
           lastScrolledElement = nextElement;
           lastScrollAt = now;
-          nextElement.scrollIntoView({
-            block: "nearest",
-            inline: "nearest",
-            behavior: "auto",
-          });
+
+          if (!scrollWithinContainer(nextElement)) {
+            nextElement.scrollIntoView({
+              block: "nearest",
+              inline: "nearest",
+              behavior: "auto",
+            });
+          }
         }
 
         return;

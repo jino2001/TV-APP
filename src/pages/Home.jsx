@@ -5,7 +5,10 @@ function Home({ contentItems, onPlay }) {
   return (
     <div className="home-page home-page--simple">
       <section className="channel-board" aria-label="Live TV channels">
-        <div className="channel-list channel-list--home">
+        <div
+          className="channel-list channel-list--home"
+          data-tv-scroll-container="true"
+        >
           {contentItems.map((item, index) => (
             <TvCard
               key={item.id}
