@@ -33,16 +33,26 @@ const actionAliases = {
 };
 
 const codeDigitAliases = {
+  Digit0: "0",
   Digit1: "1",
   Digit2: "2",
   Digit3: "3",
   Digit4: "4",
   Digit5: "5",
+  Digit6: "6",
+  Digit7: "7",
+  Digit8: "8",
+  Digit9: "9",
+  Numpad0: "0",
   Numpad1: "1",
   Numpad2: "2",
   Numpad3: "3",
   Numpad4: "4",
   Numpad5: "5",
+  Numpad6: "6",
+  Numpad7: "7",
+  Numpad8: "8",
+  Numpad9: "9",
 };
 
 const keyCodeAliases = {
@@ -58,17 +68,27 @@ const keyCodeAliases = {
   32: "SPACE",
   33: "CHANNEL_UP",
   34: "CHANNEL_DOWN",
+  48: "0",
   49: "1",
   50: "2",
   51: "3",
   52: "4",
   53: "5",
+  54: "6",
+  55: "7",
+  56: "8",
+  57: "9",
   66: "ENTER",
+  96: "0",
   97: "1",
   98: "2",
   99: "3",
   100: "4",
   101: "5",
+  102: "6",
+  103: "7",
+  104: "8",
+  105: "9",
   111: "BACK",
   166: "BACK",
   427: "CHANNEL_UP",
@@ -91,9 +111,9 @@ export const handledRemoteActions = new Set([
 export function getRemoteKey(event) {
   const digit =
     codeDigitAliases[event.code] ??
-    (/^[1-5]$/.test(event.key) ? event.key : null) ??
+    (/^[0-9]$/.test(event.key) ? event.key : null) ??
     (typeof keyCodeAliases[event.keyCode] === "string" &&
-    /^[1-5]$/.test(keyCodeAliases[event.keyCode])
+    /^[0-9]$/.test(keyCodeAliases[event.keyCode])
       ? keyCodeAliases[event.keyCode]
       : null);
 

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Personal TV">
+  <defs>
+    <linearGradient id="appTile" x1="50" y1="18" x2="470" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06194a"/>
+      <stop offset="0.48" stop-color="#020b25"/>
+      <stop offset="1" stop-color="#010617"/>
+    </linearGradient>
+    <linearGradient id="screenStroke" x1="96" y1="122" x2="408" y2="336" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#18fff3"/>
+      <stop offset="1" stop-color="#147cff"/>
+    </linearGradient>
+    <linearGradient id="playGradient" x1="214" y1="166" x2="338" y2="286" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#25fff2"/>
+      <stop offset="1" stop-color="#0b62ff"/>
+    </linearGradient>
+    <radialGradient id="floorGlow" cx="0" cy="0" r="1" gradientTransform="translate(256 392) scale(140 34)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d78ff" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#0d78ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="22" y="4" width="468" height="468" rx="112" fill="url(#appTile)"/>
+  <ellipse cx="256" cy="392" rx="146" ry="34" fill="url(#floorGlow)"/>
+  <rect x="96" y="122" width="320" height="220" rx="19" fill="#03102d" stroke="url(#screenStroke)" stroke-width="10"/>
+  <path d="M214 179c0-17 18-27 32-18l92 52c16 9 16 31 0 40l-92 52c-14 9-32-1-32-18V179Z" fill="url(#playGradient)"/>
+  <path d="M236 342h40v39h-40z" fill="#061947"/>
+  <path d="M168 394c56-11 120-11 176 0" fill="none" stroke="#6aaaff" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="356" cy="318" r="5" fill="#16fff2"/>
+  <circle cx="374" cy="318" r="5" fill="#1cd4ff"/>
+  <circle cx="392" cy="318" r="5" fill="#147cff"/>
+</svg>

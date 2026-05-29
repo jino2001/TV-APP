@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 640" role="img" aria-label="Personal TV">
+  <defs>
+    <linearGradient id="appTile" x1="280" y1="42" x2="700" y2="460" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#06194a"/>
+      <stop offset="0.48" stop-color="#020b25"/>
+      <stop offset="1" stop-color="#010617"/>
+    </linearGradient>
+    <linearGradient id="screenStroke" x1="350" y1="146" x2="630" y2="334" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#18fff3"/>
+      <stop offset="1" stop-color="#147cff"/>
+    </linearGradient>
+    <linearGradient id="playGradient" x1="456" y1="180" x2="550" y2="292" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#25fff2"/>
+      <stop offset="1" stop-color="#0b62ff"/>
+    </linearGradient>
+    <linearGradient id="textDark" x1="170" y1="520" x2="630" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#020a27"/>
+      <stop offset="1" stop-color="#06184a"/>
+    </linearGradient>
+    <linearGradient id="textBlue" x1="640" y1="520" x2="785" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#11cfff"/>
+      <stop offset="1" stop-color="#1380ff"/>
+    </linearGradient>
+    <radialGradient id="floorGlow" cx="0" cy="0" r="1" gradientTransform="translate(490 366) scale(138 32)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d78ff" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#0d78ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="980" height="640" rx="0" fill="#ffffff"/>
+  <rect x="288" y="46" width="404" height="404" rx="98" fill="url(#appTile)"/>
+  <ellipse cx="490" cy="366" rx="140" ry="32" fill="url(#floorGlow)"/>
+  <rect x="352" y="146" width="276" height="190" rx="17" fill="#03102d" stroke="url(#screenStroke)" stroke-width="9"/>
+  <path d="M456 196c0-15 16-24 29-16l80 45c14 8 14 27 0 35l-80 45c-13 8-29-1-29-16v-93Z" fill="url(#playGradient)"/>
+  <path d="M473 336h34v34h-34z" fill="#061947"/>
+  <path d="M414 381c49-10 103-10 152 0" fill="none" stroke="#6aaaff" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="576" cy="315" r="4.5" fill="#16fff2"/>
+  <circle cx="592" cy="315" r="4.5" fill="#1cd4ff"/>
+  <circle cx="608" cy="315" r="4.5" fill="#147cff"/>
+  <text x="490" y="558" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="92" font-weight="900" letter-spacing="-2">
+    <tspan fill="url(#textDark)">Personal</tspan><tspan dx="12" fill="url(#textBlue)">TV</tspan>
+  </text>
+</svg>

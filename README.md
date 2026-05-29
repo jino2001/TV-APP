@@ -45,7 +45,7 @@ Use `.m3u8` for HLS streams or a direct video URL such as `.mp4`. Add `backupStr
 
 - This app uses local `.m3u8` stream URLs from `src/data/content.js`.
 - Some streams use `http://` and may work locally but fail after HTTPS deployment because browsers block mixed content.
-- Some stream URLs contain temporary tokens. If a channel stops working, the token may have expired and the stream URL should be refreshed.
+- Some stream URLs contain temporary tokens. If playback stops, refresh the tokenized stream URL.
 - Some streams may fail because of CORS, geo-blocking, server downtime, or unsupported codecs.
 - In development, the Player includes `Use Test Stream` and `Next Source` buttons for debugging.
 - Test streams first in VLC, then in the browser app.
@@ -90,10 +90,10 @@ The debug APK is created under `android/app/build/outputs/apk/debug/` when the A
 ## Android TV App Features
 
 - Splash screen with lightweight channel loading state.
-- Clean 5-channel Home screen.
-- Number buttons 1-5 open channels directly.
+- Clean 10-channel Home screen.
+- Number buttons 1-10 open channels directly.
 - Channel zapping in Player with ArrowUp / ArrowDown.
-- Minimal Player overlay with channel title, LIVE badge, current time, Back, and Retry.
+- Minimal Player overlay with channel title, LIVE badge, and centered reload button on stream failure.
 - Fullscreen Android TV behavior with page scrolling disabled and large focus states.
 
 ## Channel List
@@ -103,15 +103,20 @@ The debug APK is created under `android/app/build/outputs/apk/debug/` when the A
 3 - Formula TV
 4 - TV Pirveli
 5 - Silk Universal
+6 - Rustavi 2
+7 - Euronews Georgia
+8 - WPT
+9 - MMA TV
+10 - Futbol
 
 ## TV Controls
 
-- Number buttons `1`-`5` open channels directly.
+- Number buttons `1`-`10` open channels directly.
 - ArrowUp / ArrowDown switch channels inside Player.
 - ChannelUp / ChannelDown switch channels if supported by the remote.
 - Enter or Space toggles play/pause.
 - Back returns to Home.
-- Tokenized stream URLs may expire and need to be refreshed.
+- Some stream URLs contain temporary tokens. If playback stops, refresh the tokenized stream URL.
 
 ### Build APK With GitHub Actions
 

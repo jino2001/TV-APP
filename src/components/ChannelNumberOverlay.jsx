@@ -8,7 +8,7 @@ function ChannelNumberOverlay({ channel, digit, message, visible }) {
   return (
     <div className="channel-number-overlay" aria-live="polite">
       <strong>{digit}</strong>
-      <span>{channel?.title ?? message ?? "Channel not found"}</span>
+      <span>{channel?.title ?? message ?? "არ მოიძებნა"}</span>
     </div>
   );
 }

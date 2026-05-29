@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChannelNumberOverlay from "../components/ChannelNumberOverlay.jsx";
-import FocusableButton from "../components/FocusableButton.jsx";
-import { getContentColors, isPlayableItem } from "../data/content.js";
+import { isPlayableItem } from "../data/content.js";
 import {
   getChannelById,
   getChannelByNumber,
@@ -15,9 +14,14 @@ import {
   REMOTE_THROTTLE_MS,
 } from "../utils/remoteKeys.js";
 
-const STREAM_ERROR_MESSAGE =
-  "Stream could not be loaded. Try another channel or refresh the stream URL.";
-const MISSING_STREAM_MESSAGE = "Stream URL is missing.";
+const MAX_CHANNEL_DIGITS = 2;
+const NUMERIC_CHANNEL_BUFFER_MS = 1100;
+const OVERLAY_AUTO_HIDE_MS = 2500;
+const RECOVERY_FAILURE_MS = 12000;
+const WATCHDOG_INTERVAL_MS = 5000;
+const WATCHDOG_STALL_MS = 12000;
+const HEARTBEAT_INTERVAL_MS = 30000;
+const SOFT_RECOVERY_THROTTLE_MS = 4000;
 
 function supportsNativeHls(videoElement) {
   return (
@@ -26,114 +30,237 @@ function supportsNativeHls(videoElement) {
   );
 }
 
-function formatClock(date) {
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
-}
-
 function clearPlayerFocus() {
   document
     .querySelectorAll("[data-player-action].is-focused")
     .forEach((element) => element.classList.remove("is-focused"));
 }
 
-function focusPlayerAction() {
-  const action = document.querySelector("[data-player-action]");
-  action?.focus({ preventScroll: true });
-  action?.classList.add("is-focused");
-}
-
-export default function Player({ contentId, contentItems, onBack, onSwitchChannel }) {
+export default function Player({
+  contentId,
+  contentItems,
+  onBack,
+  onSwitchChannel,
+}) {
   const content = useMemo(
     () => getChannelById(contentId, contentItems),
     [contentId, contentItems],
   );
   const videoRef = useRef(null);
+  const hlsRef = useRef(null);
+  const reloadButtonRef = useRef(null);
   const lastRemoteEventAtRef = useRef(0);
   const lastChannelSwitchAtRef = useRef(0);
+  const numericBufferRef = useRef("");
+  const numericBufferTimerRef = useRef(null);
+  const waitingTimerRef = useRef(null);
+  const watchdogTimerRef = useRef(null);
+  const playbackStateRef = useRef("loading");
+  const lastProgressRef = useRef({ at: performance.now(), time: 0 });
+  const lastRecoveryAttemptAtRef = useRef(0);
+  const userPausedRef = useRef(false);
   const [playbackState, setPlaybackState] = useState("loading");
-  const [errorMessage, setErrorMessage] = useState("");
-  const [retryKey, setRetryKey] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
   const [overlayVisible, setOverlayVisible] = useState(true);
-  const [currentTime, setCurrentTime] = useState(() => formatClock(new Date()));
   const [numberOverlay, setNumberOverlay] = useState({
     visible: false,
     digit: "",
     channel: null,
     message: "",
   });
-  const colors = getContentColors(content);
   const streamUrl = content?.streamUrl ?? "";
   const canPlay = Boolean(content && isPlayableItem(content) && streamUrl);
+  const isReloadVisible = playbackState === "failed";
 
   const showOverlay = useCallback(() => {
-    setOverlayVisible(true);
+    if (playbackStateRef.current !== "failed") {
+      setOverlayVisible(true);
+    }
   }, []);
 
-  const showNumberOverlay = useCallback((digit, channel) => {
+  const clearNumericBufferTimer = useCallback(() => {
+    if (numericBufferTimerRef.current) {
+      window.clearTimeout(numericBufferTimerRef.current);
+      numericBufferTimerRef.current = null;
+    }
+  }, []);
+
+  const clearStreamTimers = useCallback(() => {
+    if (waitingTimerRef.current) {
+      window.clearTimeout(waitingTimerRef.current);
+      waitingTimerRef.current = null;
+    }
+
+    if (watchdogTimerRef.current) {
+      window.clearInterval(watchdogTimerRef.current);
+      watchdogTimerRef.current = null;
+    }
+  }, []);
+
+  const showReloadOverlay = useCallback(
+    (reason) => {
+      clearStreamTimers();
+      clearPlayerFocus();
+
+      if (import.meta.env.DEV && reason) {
+        console.warn("Live stream needs reload:", reason);
+      }
+
+      setPlaybackState("failed");
+      setOverlayVisible(false);
+    },
+    [clearStreamTimers],
+  );
+
+  const showNumberOverlay = useCallback((digits, channel) => {
     setNumberOverlay({
       visible: true,
-      digit,
+      digit: digits,
       channel,
-      message: channel ? "" : "Channel not found",
+      message: channel ? "" : "არ მოიძებნა",
     });
   }, []);
 
+  const hasLongerChannelNumber = useCallback(
+    (digits) =>
+      contentItems.some((channel) => {
+        const channelNumber = String(channel.channelNumber ?? "");
+        return (
+          channelNumber.startsWith(digits) &&
+          channelNumber.length > digits.length
+        );
+      }),
+    [contentItems],
+  );
+
   const switchToChannel = useCallback(
-    (channel) => {
+    (channel, options = {}) => {
       if (!channel || channel.id === contentId) {
         return;
       }
 
       const now = performance.now();
 
-      if (now - lastChannelSwitchAtRef.current < CHANNEL_SWITCH_THROTTLE_MS) {
+      if (
+        !options.force &&
+        now - lastChannelSwitchAtRef.current < CHANNEL_SWITCH_THROTTLE_MS
+      ) {
         return;
       }
 
       lastChannelSwitchAtRef.current = now;
+      userPausedRef.current = false;
       clearPlayerFocus();
+      clearStreamTimers();
       setPlaybackState("loading");
-      setErrorMessage("");
       setOverlayVisible(true);
       onSwitchChannel(channel.id);
     },
-    [contentId, onSwitchChannel],
+    [clearStreamTimers, contentId, onSwitchChannel],
   );
 
-  const retryStream = useCallback(() => {
+  const tuneBufferedChannel = useCallback(() => {
+    const digits = numericBufferRef.current;
+
+    if (!digits) {
+      return;
+    }
+
+    clearNumericBufferTimer();
+    numericBufferRef.current = "";
+
+    const channel = getChannelByNumber(digits, contentItems);
+    showNumberOverlay(digits, channel);
+    switchToChannel(channel, { force: true });
+  }, [
+    clearNumericBufferTimer,
+    contentItems,
+    showNumberOverlay,
+    switchToChannel,
+  ]);
+
+  const queueNumericChannel = useCallback(
+    (digit) => {
+      clearNumericBufferTimer();
+
+      const nextDigits = `${numericBufferRef.current}${digit}`.slice(
+        0,
+        MAX_CHANNEL_DIGITS,
+      );
+      numericBufferRef.current = nextDigits;
+
+      const channel = getChannelByNumber(nextDigits, contentItems);
+      showNumberOverlay(nextDigits, channel);
+
+      if (
+        nextDigits.length >= MAX_CHANNEL_DIGITS ||
+        !hasLongerChannelNumber(nextDigits)
+      ) {
+        tuneBufferedChannel();
+        return;
+      }
+
+      numericBufferTimerRef.current = window.setTimeout(
+        tuneBufferedChannel,
+        NUMERIC_CHANNEL_BUFFER_MS,
+      );
+    },
+    [
+      clearNumericBufferTimer,
+      contentItems,
+      hasLongerChannelNumber,
+      showNumberOverlay,
+      tuneBufferedChannel,
+    ],
+  );
+
+  const reloadCurrentStream = useCallback(() => {
+    const video = videoRef.current;
+
     clearPlayerFocus();
-    setErrorMessage("");
+    clearStreamTimers();
+    hlsRef.current?.destroy();
+    hlsRef.current = null;
+
+    if (video) {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+
+    userPausedRef.current = false;
+    setOverlayVisible(true);
     setPlaybackState("loading");
-    setRetryKey((currentKey) => currentKey + 1);
-    showOverlay();
-  }, [showOverlay]);
+    setReloadKey((currentKey) => currentKey + 1);
+  }, [clearStreamTimers]);
 
   const togglePlayback = useCallback(async () => {
     const video = videoRef.current;
 
-    if (!canPlay || !video || playbackState === "error") {
+    if (!canPlay || !video || playbackStateRef.current === "failed") {
       return;
     }
 
     try {
       if (video.paused) {
+        userPausedRef.current = false;
         await video.play();
       } else {
+        userPausedRef.current = true;
         video.pause();
       }
-    } catch {
-      setPlaybackState("error");
-      setErrorMessage(STREAM_ERROR_MESSAGE);
-      showOverlay();
+    } catch (error) {
+      showReloadOverlay(error?.message ?? "playback");
     }
-  }, [canPlay, playbackState, showOverlay]);
+  }, [canPlay, showReloadOverlay]);
+
+  useEffect(() => {
+    playbackStateRef.current = playbackState;
+  }, [playbackState]);
 
   useEffect(() => {
     setOverlayVisible(true);
-    setErrorMessage("");
-    setPlaybackState(canPlay ? "loading" : "error");
+    setPlaybackState(canPlay ? "loading" : "failed");
   }, [canPlay, contentId]);
 
   useEffect(() => {
@@ -146,18 +273,10 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
         ...currentOverlay,
         visible: false,
       }));
-    }, 1500);
+    }, 900);
 
     return () => window.clearTimeout(timerId);
   }, [numberOverlay.visible]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setCurrentTime(formatClock(new Date()));
-    }, 30000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
 
   useEffect(() => {
     if (!overlayVisible || playbackState !== "playing") {
@@ -167,35 +286,177 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
     const timerId = window.setTimeout(() => {
       setOverlayVisible(false);
       clearPlayerFocus();
-    }, 3000);
+    }, OVERLAY_AUTO_HIDE_MS);
 
     return () => window.clearTimeout(timerId);
   }, [overlayVisible, playbackState]);
 
   useEffect(() => {
+    if (!isReloadVisible) {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      reloadButtonRef.current?.focus({ preventScroll: true });
+      reloadButtonRef.current?.classList.add("is-focused");
+    }, 30);
+
+    return () => window.clearTimeout(timerId);
+  }, [isReloadVisible]);
+
+  useEffect(() => {
+    let wakeLock = null;
+    let cancelled = false;
+
+    async function requestWakeLock() {
+      if (!("wakeLock" in navigator) || document.visibilityState !== "visible") {
+        return;
+      }
+
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener?.("release", () => {
+          wakeLock = null;
+        });
+      } catch {
+        wakeLock = null;
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (!cancelled && document.visibilityState === "visible" && !wakeLock) {
+        requestWakeLock();
+      }
+    }
+
+    requestWakeLock();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      const releasePromise = wakeLock?.release?.();
+      releasePromise?.catch?.(() => {});
+      wakeLock = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!canPlay) {
+      return undefined;
+    }
+
+    const heartbeatId = window.setInterval(() => {
+      const video = videoRef.current;
+
+      if (
+        !video ||
+        userPausedRef.current ||
+        playbackStateRef.current === "failed" ||
+        playbackStateRef.current === "loading" ||
+        video.ended ||
+        video.seeking
+      ) {
+        return;
+      }
+
+      if (video.paused) {
+        video.play().catch(() => {});
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    return () => window.clearInterval(heartbeatId);
+  }, [canPlay, contentId, reloadKey]);
+
+  useEffect(() => {
     const video = videoRef.current;
 
-    if (!content) {
-      setPlaybackState("error");
-      setErrorMessage("Channel not found.");
+    if (!content || !streamUrl || !canPlay || !video) {
+      showReloadOverlay("missing stream");
       return undefined;
     }
 
-    if (!streamUrl) {
-      setPlaybackState("error");
-      setErrorMessage(MISSING_STREAM_MESSAGE);
-      return undefined;
-    }
-
-    if (!canPlay || !video) {
-      setPlaybackState("error");
-      setErrorMessage(STREAM_ERROR_MESSAGE);
-      return undefined;
-    }
-
-    let hls;
     let cancelled = false;
     const nativeHlsSupported = Boolean(supportsNativeHls(video));
+
+    function resetProgressTracker() {
+      lastProgressRef.current = {
+        at: performance.now(),
+        time: video.currentTime,
+      };
+    }
+
+    function startWatchdog() {
+      if (watchdogTimerRef.current) {
+        window.clearInterval(watchdogTimerRef.current);
+      }
+
+      resetProgressTracker();
+      watchdogTimerRef.current = window.setInterval(() => {
+        if (
+          cancelled ||
+          video.paused ||
+          video.ended ||
+          video.seeking ||
+          playbackStateRef.current !== "playing"
+        ) {
+          resetProgressTracker();
+          return;
+        }
+
+        const currentTime = video.currentTime;
+        const lastProgress = lastProgressRef.current;
+
+        if (Math.abs(currentTime - lastProgress.time) > 0.25) {
+          lastProgressRef.current = {
+            at: performance.now(),
+            time: currentTime,
+          };
+          return;
+        }
+
+        if (performance.now() - lastProgress.at >= WATCHDOG_STALL_MS) {
+          showReloadOverlay("watchdog");
+        }
+      }, WATCHDOG_INTERVAL_MS);
+    }
+
+    function scheduleRecoveryFailure(reason) {
+      if (waitingTimerRef.current) {
+        window.clearTimeout(waitingTimerRef.current);
+      }
+
+      waitingTimerRef.current = window.setTimeout(() => {
+        showReloadOverlay(reason);
+      }, RECOVERY_FAILURE_MS);
+    }
+
+    async function attemptSoftRecovery(reason) {
+      if (cancelled) {
+        return;
+      }
+
+      setPlaybackState("loading");
+      scheduleRecoveryFailure(reason);
+
+      if (userPausedRef.current) {
+        return;
+      }
+
+      const now = performance.now();
+
+      if (now - lastRecoveryAttemptAtRef.current < SOFT_RECOVERY_THROTTLE_MS) {
+        return;
+      }
+
+      lastRecoveryAttemptAtRef.current = now;
+
+      try {
+        await video.play();
+      } catch {
+        // The recovery timer will show the single reload button if playback does not resume.
+      }
+    }
 
     async function playVideo() {
       if (cancelled) {
@@ -203,40 +464,59 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
       }
 
       try {
+        userPausedRef.current = false;
         await video.play();
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setPlaybackState("paused");
-          showOverlay();
+          showReloadOverlay(error?.message ?? "play");
         }
       }
     }
 
     function handleWaiting() {
-      if (!cancelled) {
-        setPlaybackState("loading");
+      if (cancelled) {
+        return;
       }
+
+      attemptSoftRecovery("waiting");
     }
 
     function handlePlaying() {
-      if (!cancelled) {
-        setPlaybackState("playing");
-        setErrorMessage("");
+      if (cancelled) {
+        return;
       }
+
+      if (waitingTimerRef.current) {
+        window.clearTimeout(waitingTimerRef.current);
+        waitingTimerRef.current = null;
+      }
+
+      setPlaybackState("playing");
+      setOverlayVisible(true);
+      userPausedRef.current = false;
+      startWatchdog();
     }
 
     function handlePause() {
       if (!cancelled && !video.ended) {
+        if (watchdogTimerRef.current) {
+          window.clearInterval(watchdogTimerRef.current);
+          watchdogTimerRef.current = null;
+        }
         setPlaybackState("paused");
         showOverlay();
       }
     }
 
-    function handleStreamError() {
+    function handleRecoverableProblem(event) {
       if (!cancelled) {
-        setPlaybackState("error");
-        setErrorMessage(STREAM_ERROR_MESSAGE);
-        showOverlay();
+        attemptSoftRecovery(event?.type ?? "stalled");
+      }
+    }
+
+    function handleFatalProblem(event) {
+      if (!cancelled) {
+        showReloadOverlay(event?.type ?? "stream");
       }
     }
 
@@ -249,14 +529,16 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
         }
 
         if (!Hls.isSupported()) {
-          handleStreamError();
+          showReloadOverlay("hls unsupported");
           return;
         }
 
-        hls = new Hls({
+        const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
         });
+
+        hlsRef.current = hls;
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           playVideo();
@@ -264,26 +546,32 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
 
         hls.on(Hls.Events.ERROR, (_, data) => {
           if (data.fatal) {
-            handleStreamError();
+            showReloadOverlay(data.type ?? "hls");
           }
         });
 
         hls.loadSource(streamUrl);
         hls.attachMedia(video);
-      } catch {
-        handleStreamError();
+      } catch (error) {
+        showReloadOverlay(error?.message ?? "hls");
       }
     }
 
+    clearStreamTimers();
+    hlsRef.current?.destroy();
+    hlsRef.current = null;
     setPlaybackState("loading");
-    setErrorMessage("");
+    setOverlayVisible(true);
     video.pause();
     video.removeAttribute("src");
     video.load();
     video.addEventListener("waiting", handleWaiting);
     video.addEventListener("playing", handlePlaying);
     video.addEventListener("pause", handlePause);
-    video.addEventListener("error", handleStreamError);
+    video.addEventListener("stalled", handleRecoverableProblem);
+    video.addEventListener("suspend", handleRecoverableProblem);
+    video.addEventListener("ended", handleFatalProblem);
+    video.addEventListener("error", handleFatalProblem);
 
     if (nativeHlsSupported) {
       video.src = streamUrl;
@@ -295,17 +583,44 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
 
     return () => {
       cancelled = true;
-      hls?.destroy();
+      clearStreamTimers();
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
       video.removeEventListener("loadedmetadata", playVideo);
       video.removeEventListener("waiting", handleWaiting);
       video.removeEventListener("playing", handlePlaying);
       video.removeEventListener("pause", handlePause);
-      video.removeEventListener("error", handleStreamError);
+      video.removeEventListener("stalled", handleRecoverableProblem);
+      video.removeEventListener("suspend", handleRecoverableProblem);
+      video.removeEventListener("ended", handleFatalProblem);
+      video.removeEventListener("error", handleFatalProblem);
       video.pause();
       video.removeAttribute("src");
       video.load();
     };
-  }, [canPlay, content, retryKey, showOverlay, streamUrl]);
+  }, [
+    canPlay,
+    clearStreamTimers,
+    content,
+    reloadKey,
+    showOverlay,
+    showReloadOverlay,
+    streamUrl,
+  ]);
+
+  useEffect(() => {
+    numericBufferRef.current = "";
+    clearNumericBufferTimer();
+  }, [clearNumericBufferTimer, contentId]);
+
+  useEffect(() => {
+    return () => {
+      clearNumericBufferTimer();
+      clearStreamTimers();
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+    };
+  }, [clearNumericBufferTimer, clearStreamTimers]);
 
   useEffect(() => {
     function handleRemoteKey(event) {
@@ -318,6 +633,38 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
       event.preventDefault();
       event.stopPropagation();
 
+      const hasBufferedNumber = Boolean(numericBufferRef.current);
+
+      if (remoteKey.action === "NUMBER") {
+        showOverlay();
+        queueNumericChannel(remoteKey.digit);
+        return;
+      }
+
+      if (remoteKey.action === "ENTER" && hasBufferedNumber) {
+        showOverlay();
+        tuneBufferedChannel();
+        return;
+      }
+
+      if (hasBufferedNumber) {
+        numericBufferRef.current = "";
+        clearNumericBufferTimer();
+      }
+
+      if (remoteKey.action === "BACK") {
+        onBack();
+        return;
+      }
+
+      if (
+        playbackStateRef.current === "failed" &&
+        (remoteKey.action === "ENTER" || remoteKey.action === "SPACE")
+      ) {
+        reloadCurrentStream();
+        return;
+      }
+
       const now = performance.now();
 
       if (now - lastRemoteEventAtRef.current < REMOTE_THROTTLE_MS) {
@@ -327,15 +674,8 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
       lastRemoteEventAtRef.current = now;
       showOverlay();
 
-      if (remoteKey.action === "BACK") {
-        onBack();
-        return;
-      }
-
-      if (remoteKey.action === "NUMBER") {
-        const channel = getChannelByNumber(remoteKey.digit, contentItems);
-        showNumberOverlay(remoteKey.digit, channel);
-        switchToChannel(channel);
+      if (remoteKey.action === "DOWN" || remoteKey.action === "CHANNEL_UP") {
+        switchToChannel(getNextChannel(contentId, contentItems));
         return;
       }
 
@@ -344,25 +684,7 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
         return;
       }
 
-      if (remoteKey.action === "DOWN" || remoteKey.action === "CHANNEL_UP") {
-        switchToChannel(getNextChannel(contentId, contentItems));
-        return;
-      }
-
-      if (remoteKey.action === "LEFT" || remoteKey.action === "RIGHT") {
-        focusPlayerAction();
-        return;
-      }
-
       if (remoteKey.action === "ENTER" || remoteKey.action === "SPACE") {
-        const focusedAction =
-          document.activeElement?.closest?.("[data-player-action]");
-
-        if (focusedAction) {
-          focusedAction.click();
-          return;
-        }
-
         togglePlayback();
       }
     }
@@ -373,93 +695,60 @@ export default function Player({ contentId, contentItems, onBack, onSwitchChanne
       window.removeEventListener("keydown", handleRemoteKey, true);
     };
   }, [
+    clearNumericBufferTimer,
     contentId,
     contentItems,
     onBack,
-    showNumberOverlay,
+    queueNumericChannel,
+    reloadCurrentStream,
     showOverlay,
     switchToChannel,
     togglePlayback,
+    tuneBufferedChannel,
   ]);
 
-  const title = content?.title ?? "Channel unavailable";
-  const showChrome = overlayVisible || playbackState !== "playing";
-  const showLoading = canPlay && playbackState === "loading";
-  const showError = !content || playbackState === "error";
+  const title = content?.title ?? "";
+  const showChrome = overlayVisible && !isReloadVisible && content;
 
   return (
-    <div
-      className="player-page"
-      style={{
-        "--poster-start": colors[0],
-        "--poster-mid": colors[1],
-        "--poster-end": colors[2],
-      }}
-    >
+    <div className="player-page">
       <section className="player-stage player-stage--tv" aria-label={title}>
         <video
           ref={videoRef}
           className="player-video"
-          poster={content?.image || undefined}
+          autoPlay
+          controls={false}
           playsInline
           preload="auto"
         />
 
-        {showLoading && (
-          <div className="player-state player-state--loading" role="status">
-            <span className="loading-ring" />
-            <strong>Loading channel {content?.channelNumber}</strong>
-            <p>{title}</p>
-          </div>
-        )}
-
-        {showError && (
-          <div className="player-state player-state--error" role="alert">
-            <strong>Stream not available</strong>
-            <p>{errorMessage || STREAM_ERROR_MESSAGE}</p>
-          </div>
-        )}
-
         {showChrome && (
-          <div className="player-tv-overlay">
+          <div className="player-tv-overlay player-tv-overlay--minimal">
             <div className="player-tv-top">
-              <div>
-                <span className="live-pill">LIVE</span>
-                <h1>
-                  {content?.channelNumber && (
-                    <span className="player-channel-number">
-                      {content.channelNumber}
-                    </span>
-                  )}
-                  {title}
-                </h1>
-              </div>
-              <strong>{currentTime}</strong>
+              <span className="live-pill">LIVE</span>
+              <h1>
+                {content.channelNumber && (
+                  <span className="player-channel-number">
+                    {content.channelNumber}
+                  </span>
+                )}
+                {title}
+              </h1>
             </div>
+          </div>
+        )}
 
-            <div className="player-actions">
-              <FocusableButton
-                variant="ghost"
-                data-player-action="true"
-                onClick={onBack}
-              >
-                Back
-              </FocusableButton>
-              <FocusableButton
-                variant="secondary"
-                data-player-action="true"
-                onClick={retryStream}
-              >
-                Retry
-              </FocusableButton>
-            </div>
-
-            <div className="player-hints" aria-hidden="true">
-              <span>1-5: Channel</span>
-              <span>Up / Down: Switch</span>
-              <span>Enter / Space: Play/Pause</span>
-              <span>Back: Home</span>
-            </div>
+        {isReloadVisible && (
+          <div className="player-reload-overlay">
+            <button
+              ref={reloadButtonRef}
+              type="button"
+              data-player-action="true"
+              className="player-reload-button"
+              onClick={reloadCurrentStream}
+            >
+              გადატვირთვა
+            </button>
           </div>
         )}
 

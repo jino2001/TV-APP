@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChannelNumberOverlay from "./components/ChannelNumberOverlay.jsx";
 import Header from "./components/Header.jsx";
 import Home from "./pages/Home.jsx";
@@ -10,6 +10,9 @@ import { useSpatialNavigation } from "./hooks/useSpatialNavigation.js";
 import { getActiveChannels, getChannelByNumber } from "./utils/channelUtils.js";
 import { getRemoteKey, handledRemoteActions } from "./utils/remoteKeys.js";
 
+const MAX_CHANNEL_DIGITS = 2;
+const NUMERIC_CHANNEL_BUFFER_MS = 1100;
+
 export default function App() {
   const [screen, setScreen] = useState({ page: "home", contentId: null });
   const [isSplashVisible, setIsSplashVisible] = useState(true);
@@ -19,6 +22,8 @@ export default function App() {
     channel: null,
     message: "",
   });
+  const numericBufferRef = useRef("");
+  const numericBufferTimerRef = useRef(null);
   const isPlayerScreen = screen.page === "player";
   const channels = useMemo(() => getActiveChannels(contentItems), []);
 
@@ -39,19 +44,91 @@ export default function App() {
     [channels],
   );
 
-  const showNumberOverlay = useCallback((digit, channel) => {
+  const showNumberOverlay = useCallback((digits, channel) => {
     setNumberOverlay({
       visible: true,
-      digit,
+      digit: digits,
       channel,
-      message: channel ? "" : "Channel not found",
+      message: channel ? "" : "არ მოიძებნა",
     });
   }, []);
+
+  const clearNumericBufferTimer = useCallback(() => {
+    if (numericBufferTimerRef.current) {
+      window.clearTimeout(numericBufferTimerRef.current);
+      numericBufferTimerRef.current = null;
+    }
+  }, []);
+
+  const hasLongerChannelNumber = useCallback(
+    (digits) =>
+      channels.some((channel) => {
+        const channelNumber = String(channel.channelNumber ?? "");
+        return (
+          channelNumber.startsWith(digits) &&
+          channelNumber.length > digits.length
+        );
+      }),
+    [channels],
+  );
+
+  const tuneBufferedChannel = useCallback(() => {
+    const digits = numericBufferRef.current;
+
+    if (!digits) {
+      return;
+    }
+
+    clearNumericBufferTimer();
+    numericBufferRef.current = "";
+
+    const channel = getChannelByNumber(digits, channels);
+    showNumberOverlay(digits, channel);
+
+    if (channel) {
+      playChannel(channel.id);
+    }
+  }, [channels, clearNumericBufferTimer, playChannel, showNumberOverlay]);
+
+  const queueNumericChannel = useCallback(
+    (digit) => {
+      clearNumericBufferTimer();
+
+      const nextDigits = `${numericBufferRef.current}${digit}`.slice(
+        0,
+        MAX_CHANNEL_DIGITS,
+      );
+      numericBufferRef.current = nextDigits;
+
+      const channel = getChannelByNumber(nextDigits, channels);
+      showNumberOverlay(nextDigits, channel);
+
+      if (
+        nextDigits.length >= MAX_CHANNEL_DIGITS ||
+        !hasLongerChannelNumber(nextDigits)
+      ) {
+        tuneBufferedChannel();
+        return;
+      }
+
+      numericBufferTimerRef.current = window.setTimeout(
+        tuneBufferedChannel,
+        NUMERIC_CHANNEL_BUFFER_MS,
+      );
+    },
+    [
+      channels,
+      clearNumericBufferTimer,
+      hasLongerChannelNumber,
+      showNumberOverlay,
+      tuneBufferedChannel,
+    ],
+  );
 
   useEffect(() => {
     const timerId = window.setTimeout(() => {
       setIsSplashVisible(false);
-    }, 900);
+    }, 1700);
 
     return () => window.clearTimeout(timerId);
   }, []);
@@ -66,10 +143,21 @@ export default function App() {
         ...currentOverlay,
         visible: false,
       }));
-    }, 1500);
+    }, 900);
 
     return () => window.clearTimeout(timerId);
   }, [numberOverlay.visible]);
+
+  useEffect(() => {
+    return () => clearNumericBufferTimer();
+  }, [clearNumericBufferTimer]);
+
+  useEffect(() => {
+    if (isSplashVisible || isPlayerScreen) {
+      numericBufferRef.current = "";
+      clearNumericBufferTimer();
+    }
+  }, [clearNumericBufferTimer, isPlayerScreen, isSplashVisible]);
 
   useEffect(() => {
     if (isSplashVisible || isPlayerScreen) {
@@ -83,19 +171,29 @@ export default function App() {
         return;
       }
 
-      if (remoteKey.action !== "NUMBER") {
+      const hasBufferedNumber = Boolean(numericBufferRef.current);
+
+      if (
+        remoteKey.action !== "NUMBER" &&
+        !(remoteKey.action === "ENTER" && hasBufferedNumber)
+      ) {
+        if (hasBufferedNumber) {
+          numericBufferRef.current = "";
+          clearNumericBufferTimer();
+        }
+
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
 
-      const channel = getChannelByNumber(remoteKey.digit, channels);
-      showNumberOverlay(remoteKey.digit, channel);
-
-      if (channel) {
-        playChannel(channel.id);
+      if (remoteKey.action === "NUMBER") {
+        queueNumericChannel(remoteKey.digit);
+        return;
       }
+
+      tuneBufferedChannel();
     }
 
     window.addEventListener("keydown", handleNumericKey, true);
@@ -104,11 +202,11 @@ export default function App() {
       window.removeEventListener("keydown", handleNumericKey, true);
     };
   }, [
-    channels,
+    clearNumericBufferTimer,
     isPlayerScreen,
     isSplashVisible,
-    playChannel,
-    showNumberOverlay,
+    queueNumericChannel,
+    tuneBufferedChannel,
   ]);
 
   useSpatialNavigation(
