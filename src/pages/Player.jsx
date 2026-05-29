@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ChannelNumberOverlay from "../components/ChannelNumberOverlay.jsx";
-import { isPlayableItem } from "../data/content.js";
+import { getPlaybackType, isPlayableItem } from "../data/content.js";
 import {
   getChannelById,
   getChannelByNumber,
@@ -18,6 +18,8 @@ const MAX_CHANNEL_DIGITS = 2;
 const NUMERIC_CHANNEL_BUFFER_MS = 1100;
 const OVERLAY_AUTO_HIDE_MS = 2500;
 const RECOVERY_FAILURE_MS = 12000;
+const IFRAME_LOAD_TIMEOUT_MS = 12000;
+const IFRAME_BLOCK_CHECK_MS = 250;
 const WATCHDOG_INTERVAL_MS = 5000;
 const WATCHDOG_STALL_MS = 12000;
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -36,6 +38,40 @@ function clearPlayerFocus() {
     .forEach((element) => element.classList.remove("is-focused"));
 }
 
+function getIframeBlockReason(iframeElement) {
+  try {
+    const frameDocument =
+      iframeElement?.contentDocument ?? iframeElement?.contentWindow?.document;
+    const frameLocation = frameDocument?.location?.href ?? "";
+    const frameTitle = frameDocument?.title ?? "";
+    const frameText = frameDocument?.body?.innerText ?? "";
+    const visibleText = `${frameLocation} ${frameTitle} ${frameText}`.toLowerCase();
+
+    if (
+      visibleText.includes("refused to connect") ||
+      visibleText.includes("chrome-error") ||
+      visibleText.includes("err_blocked_by_response") ||
+      visibleText.includes("x-frame-options") ||
+      visibleText.includes("frame-ancestors")
+    ) {
+      return "iframe blocked";
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function isKnownBlockedIframeUrl(streamUrl) {
+  try {
+    const url = new URL(streamUrl);
+    return url.hostname === "www.myvideo.ge" && url.pathname.startsWith("/tv/");
+  } catch {
+    return false;
+  }
+}
+
 export default function Player({
   contentId,
   contentItems,
@@ -47,12 +83,15 @@ export default function Player({
     [contentId, contentItems],
   );
   const videoRef = useRef(null);
+  const iframeRef = useRef(null);
   const hlsRef = useRef(null);
   const reloadButtonRef = useRef(null);
   const lastRemoteEventAtRef = useRef(0);
   const lastChannelSwitchAtRef = useRef(0);
   const numericBufferRef = useRef("");
   const numericBufferTimerRef = useRef(null);
+  const iframeBlockCheckTimerRef = useRef(null);
+  const iframeLoadTimerRef = useRef(null);
   const waitingTimerRef = useRef(null);
   const watchdogTimerRef = useRef(null);
   const playbackStateRef = useRef("loading");
@@ -61,6 +100,7 @@ export default function Player({
   const userPausedRef = useRef(false);
   const [playbackState, setPlaybackState] = useState("loading");
   const [reloadKey, setReloadKey] = useState(0);
+  const [iframeReloadKey, setIframeReloadKey] = useState(0);
   const [overlayVisible, setOverlayVisible] = useState(true);
   const [numberOverlay, setNumberOverlay] = useState({
     visible: false,
@@ -68,8 +108,11 @@ export default function Player({
     channel: null,
     message: "",
   });
+  const playbackType = getPlaybackType(content);
   const streamUrl = content?.streamUrl ?? "";
   const canPlay = Boolean(content && isPlayableItem(content) && streamUrl);
+  const isHlsPlayback = playbackType === "hls";
+  const isIframePlayback = playbackType === "iframe";
   const isReloadVisible = playbackState === "failed";
 
   const showOverlay = useCallback(() => {
@@ -86,6 +129,16 @@ export default function Player({
   }, []);
 
   const clearStreamTimers = useCallback(() => {
+    if (iframeLoadTimerRef.current) {
+      window.clearTimeout(iframeLoadTimerRef.current);
+      iframeLoadTimerRef.current = null;
+    }
+
+    if (iframeBlockCheckTimerRef.current) {
+      window.clearTimeout(iframeBlockCheckTimerRef.current);
+      iframeBlockCheckTimerRef.current = null;
+    }
+
     if (waitingTimerRef.current) {
       window.clearTimeout(waitingTimerRef.current);
       waitingTimerRef.current = null;
@@ -106,6 +159,7 @@ export default function Player({
         console.warn("Live stream needs reload:", reason);
       }
 
+      playbackStateRef.current = "failed";
       setPlaybackState("failed");
       setOverlayVisible(false);
     },
@@ -152,12 +206,31 @@ export default function Player({
       userPausedRef.current = false;
       clearPlayerFocus();
       clearStreamTimers();
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+
+      const video = videoRef.current;
+
+      if (video) {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      }
+
       setPlaybackState("loading");
       setOverlayVisible(true);
       onSwitchChannel(channel.id);
     },
     [clearStreamTimers, contentId, onSwitchChannel],
   );
+
+  const switchToNextChannel = useCallback(() => {
+    switchToChannel(getNextChannel(contentId, contentItems));
+  }, [contentId, contentItems, switchToChannel]);
+
+  const switchToPreviousChannel = useCallback(() => {
+    switchToChannel(getPreviousChannel(contentId, contentItems));
+  }, [contentId, contentItems, switchToChannel]);
 
   const tuneBufferedChannel = useCallback(() => {
     const digits = numericBufferRef.current;
@@ -222,6 +295,15 @@ export default function Player({
     hlsRef.current?.destroy();
     hlsRef.current = null;
 
+    if (isIframePlayback) {
+      userPausedRef.current = false;
+      playbackStateRef.current = "loading";
+      setOverlayVisible(false);
+      setPlaybackState("loading");
+      setIframeReloadKey((currentKey) => currentKey + 1);
+      return;
+    }
+
     if (video) {
       video.pause();
       video.removeAttribute("src");
@@ -229,15 +311,21 @@ export default function Player({
     }
 
     userPausedRef.current = false;
+    playbackStateRef.current = "loading";
     setOverlayVisible(true);
     setPlaybackState("loading");
     setReloadKey((currentKey) => currentKey + 1);
-  }, [clearStreamTimers]);
+  }, [clearStreamTimers, isIframePlayback]);
 
   const togglePlayback = useCallback(async () => {
     const video = videoRef.current;
 
-    if (!canPlay || !video || playbackStateRef.current === "failed") {
+    if (
+      !isHlsPlayback ||
+      !canPlay ||
+      !video ||
+      playbackStateRef.current === "failed"
+    ) {
       return;
     }
 
@@ -252,7 +340,47 @@ export default function Player({
     } catch (error) {
       showReloadOverlay(error?.message ?? "playback");
     }
-  }, [canPlay, showReloadOverlay]);
+  }, [canPlay, isHlsPlayback, showReloadOverlay]);
+
+  const handleIframeLoad = useCallback(() => {
+    if (!isIframePlayback || playbackStateRef.current === "failed") {
+      return;
+    }
+
+    if (iframeLoadTimerRef.current) {
+      window.clearTimeout(iframeLoadTimerRef.current);
+      iframeLoadTimerRef.current = null;
+    }
+
+    if (iframeBlockCheckTimerRef.current) {
+      window.clearTimeout(iframeBlockCheckTimerRef.current);
+    }
+
+    iframeBlockCheckTimerRef.current = window.setTimeout(() => {
+      iframeBlockCheckTimerRef.current = null;
+
+      if (!isIframePlayback || playbackStateRef.current === "failed") {
+        return;
+      }
+
+      const blockReason =
+        getIframeBlockReason(iframeRef.current) ||
+        (isKnownBlockedIframeUrl(streamUrl) ? "iframe blocked" : null);
+
+      if (blockReason) {
+        showReloadOverlay(blockReason);
+        return;
+      }
+
+      playbackStateRef.current = "playing";
+      setPlaybackState("playing");
+      setOverlayVisible(false);
+    }, IFRAME_BLOCK_CHECK_MS);
+  }, [isIframePlayback, showReloadOverlay, streamUrl]);
+
+  const handleIframeError = useCallback(() => {
+    showReloadOverlay("iframe");
+  }, [showReloadOverlay]);
 
   useEffect(() => {
     playbackStateRef.current = playbackState;
@@ -342,7 +470,7 @@ export default function Player({
   }, []);
 
   useEffect(() => {
-    if (!canPlay) {
+    if (!canPlay || !isHlsPlayback) {
       return undefined;
     }
 
@@ -366,9 +494,13 @@ export default function Player({
     }, HEARTBEAT_INTERVAL_MS);
 
     return () => window.clearInterval(heartbeatId);
-  }, [canPlay, contentId, reloadKey]);
+  }, [canPlay, contentId, isHlsPlayback, reloadKey]);
 
   useEffect(() => {
+    if (!isHlsPlayback) {
+      return undefined;
+    }
+
     const video = videoRef.current;
 
     if (!content || !streamUrl || !canPlay || !video) {
@@ -514,6 +646,12 @@ export default function Player({
       }
     }
 
+    function handleSuspend() {
+      if (!cancelled && video.paused && !userPausedRef.current) {
+        video.play().catch(() => {});
+      }
+    }
+
     function handleFatalProblem(event) {
       if (!cancelled) {
         showReloadOverlay(event?.type ?? "stream");
@@ -534,8 +672,13 @@ export default function Player({
         }
 
         const hls = new Hls({
+          backBufferLength: 30,
           enableWorker: true,
+          fragLoadingMaxRetry: 4,
+          levelLoadingMaxRetry: 4,
           lowLatencyMode: true,
+          manifestLoadingMaxRetry: 4,
+          startFragPrefetch: true,
         });
 
         hlsRef.current = hls;
@@ -545,9 +688,23 @@ export default function Player({
         });
 
         hls.on(Hls.Events.ERROR, (_, data) => {
-          if (data.fatal) {
-            showReloadOverlay(data.type ?? "hls");
+          if (!data.fatal) {
+            return;
           }
+
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+            attemptSoftRecovery("hls media");
+            hls.recoverMediaError();
+            return;
+          }
+
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            attemptSoftRecovery("hls network");
+            hls.startLoad();
+            return;
+          }
+
+          showReloadOverlay(data.type ?? "hls");
         });
 
         hls.loadSource(streamUrl);
@@ -569,7 +726,7 @@ export default function Player({
     video.addEventListener("playing", handlePlaying);
     video.addEventListener("pause", handlePause);
     video.addEventListener("stalled", handleRecoverableProblem);
-    video.addEventListener("suspend", handleRecoverableProblem);
+    video.addEventListener("suspend", handleSuspend);
     video.addEventListener("ended", handleFatalProblem);
     video.addEventListener("error", handleFatalProblem);
 
@@ -591,7 +748,7 @@ export default function Player({
       video.removeEventListener("playing", handlePlaying);
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("stalled", handleRecoverableProblem);
-      video.removeEventListener("suspend", handleRecoverableProblem);
+      video.removeEventListener("suspend", handleSuspend);
       video.removeEventListener("ended", handleFatalProblem);
       video.removeEventListener("error", handleFatalProblem);
       video.pause();
@@ -602,8 +759,50 @@ export default function Player({
     canPlay,
     clearStreamTimers,
     content,
+    isHlsPlayback,
     reloadKey,
     showOverlay,
+    showReloadOverlay,
+    streamUrl,
+  ]);
+
+  useEffect(() => {
+    if (!isIframePlayback) {
+      return undefined;
+    }
+
+    clearStreamTimers();
+    hlsRef.current?.destroy();
+    hlsRef.current = null;
+    userPausedRef.current = false;
+    setOverlayVisible(false);
+
+    if (!content || !streamUrl || !canPlay) {
+      showReloadOverlay("missing iframe");
+      return undefined;
+    }
+
+    setPlaybackState("loading");
+    iframeLoadTimerRef.current = window.setTimeout(() => {
+      if (import.meta.env.DEV) {
+        console.warn("Iframe channel did not report load in time.");
+      }
+
+      showReloadOverlay("iframe timeout");
+    }, IFRAME_LOAD_TIMEOUT_MS);
+
+    return () => {
+      if (iframeLoadTimerRef.current) {
+        window.clearTimeout(iframeLoadTimerRef.current);
+        iframeLoadTimerRef.current = null;
+      }
+    };
+  }, [
+    canPlay,
+    clearStreamTimers,
+    content,
+    iframeReloadKey,
+    isIframePlayback,
     showReloadOverlay,
     streamUrl,
   ]);
@@ -674,13 +873,21 @@ export default function Player({
       lastRemoteEventAtRef.current = now;
       showOverlay();
 
-      if (remoteKey.action === "DOWN" || remoteKey.action === "CHANNEL_UP") {
-        switchToChannel(getNextChannel(contentId, contentItems));
+      if (
+        remoteKey.action === "UP" ||
+        remoteKey.action === "RIGHT" ||
+        remoteKey.action === "CHANNEL_UP"
+      ) {
+        switchToNextChannel();
         return;
       }
 
-      if (remoteKey.action === "UP" || remoteKey.action === "CHANNEL_DOWN") {
-        switchToChannel(getPreviousChannel(contentId, contentItems));
+      if (
+        remoteKey.action === "DOWN" ||
+        remoteKey.action === "LEFT" ||
+        remoteKey.action === "CHANNEL_DOWN"
+      ) {
+        switchToPreviousChannel();
         return;
       }
 
@@ -702,13 +909,65 @@ export default function Player({
     queueNumericChannel,
     reloadCurrentStream,
     showOverlay,
-    switchToChannel,
+    switchToNextChannel,
+    switchToPreviousChannel,
     togglePlayback,
     tuneBufferedChannel,
   ]);
 
   const title = content?.title ?? "";
   const showChrome = overlayVisible && !isReloadVisible && content;
+  const isIframeReady = isIframePlayback && playbackState === "playing";
+
+  if (isIframePlayback) {
+    return (
+      <div
+        className={`iframe-player-page ${
+          isReloadVisible ? "iframe-player-page--failed" : ""
+        }`}
+      >
+        <div className="iframe-crop-wrapper">
+          <iframe
+            ref={iframeRef}
+            key={iframeReloadKey}
+            src={streamUrl}
+            title={title}
+            className={`cropped-live-iframe ${
+              isIframeReady ? "cropped-live-iframe--ready" : ""
+            }`}
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            allowFullScreen
+            tabIndex={-1}
+            onLoad={handleIframeLoad}
+            onError={handleIframeError}
+          />
+        </div>
+
+        <div className="iframe-top-mask" />
+        <div className="iframe-bottom-mask" />
+
+        {isReloadVisible && (
+          <button
+            ref={reloadButtonRef}
+            type="button"
+            data-player-action="true"
+            className="center-reload-button"
+            autoFocus
+            onClick={reloadCurrentStream}
+          >
+            გადატვირთვა
+          </button>
+        )}
+
+        <ChannelNumberOverlay
+          channel={numberOverlay.channel}
+          digit={numberOverlay.digit}
+          message={numberOverlay.message}
+          visible={numberOverlay.visible}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="player-page">
@@ -741,13 +1000,13 @@ export default function Player({
         {isReloadVisible && (
           <div className="player-reload-overlay">
             <button
-              ref={reloadButtonRef}
-              type="button"
-              data-player-action="true"
-              className="player-reload-button"
-              onClick={reloadCurrentStream}
-            >
-              გადატვირთვა
+            ref={reloadButtonRef}
+            type="button"
+            data-player-action="true"
+            className="center-reload-button"
+            onClick={reloadCurrentStream}
+          >
+            გადატვირთვა
             </button>
           </div>
         )}

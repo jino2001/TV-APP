@@ -90,9 +90,9 @@ The debug APK is created under `android/app/build/outputs/apk/debug/` when the A
 ## Android TV App Features
 
 - Splash screen with lightweight channel loading state.
-- Clean 10-channel Home screen.
-- Number buttons 1-10 open channels directly.
-- Channel zapping in Player with ArrowUp / ArrowDown.
+- Clean 7-channel Home screen.
+- Number buttons 1-7 open channels directly.
+- Channel zapping in Player with ArrowUp / ArrowRight and ArrowDown / ArrowLeft.
 - Minimal Player overlay with channel title, LIVE badge, and centered reload button on stream failure.
 - Fullscreen Android TV behavior with page scrolling disabled and large focus states.
 
@@ -105,14 +105,12 @@ The debug APK is created under `android/app/build/outputs/apk/debug/` when the A
 5 - Silk Universal
 6 - Rustavi 2
 7 - Euronews Georgia
-8 - WPT
-9 - MMA TV
-10 - Futbol
 
 ## TV Controls
 
-- Number buttons `1`-`10` open channels directly.
-- ArrowUp / ArrowDown switch channels inside Player.
+- Number buttons `1`-`7` open channels directly.
+- ArrowUp / ArrowRight switch to the next channel inside Player.
+- ArrowDown / ArrowLeft switch to the previous channel inside Player.
 - ChannelUp / ChannelDown switch channels if supported by the remote.
 - Enter or Space toggles play/pause.
 - Back returns to Home.

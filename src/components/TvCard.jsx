@@ -18,6 +18,7 @@ function TvCard({ autoFocus = false, item, onSelect, size = "default" }) {
   const playable = isPlayableItem(item);
   const badgeText = getBadgeText(item);
   const initials = useMemo(() => getContentInitials(item), [item]);
+  const isRow = size === "row";
   const style = useMemo(
     () => ({
       "--poster-start": colors[0],
@@ -26,6 +27,43 @@ function TvCard({ autoFocus = false, item, onSelect, size = "default" }) {
     }),
     [colors],
   );
+
+  if (isRow) {
+    return (
+      <button
+        type="button"
+        data-tv-focusable="true"
+        data-tv-autofocus={autoFocus ? "true" : undefined}
+        className={`tv-card tv-card--row ${playable ? "" : "tv-card--inactive"}`}
+        onClick={() => onSelect(item.id)}
+        aria-label={`Channel ${item.channelNumber}: ${item.title}`}
+        style={style}
+      >
+        {item.channelNumber && (
+          <span className="channel-row-number">{item.channelNumber}</span>
+        )}
+
+        <span className="channel-row-logo" aria-hidden="true">
+          {item.image && (
+            <img
+              src={item.image}
+              alt=""
+              decoding="async"
+              loading="lazy"
+              onError={(event) => {
+                event.currentTarget.hidden = true;
+              }}
+            />
+          )}
+          {!item.image && <span>{initials}</span>}
+        </span>
+
+        <span className="channel-row-title">{item.title}</span>
+
+        {badgeText && <span className="channel-row-live">{badgeText}</span>}
+      </button>
+    );
+  }
 
   return (
     <button
@@ -57,7 +95,7 @@ function TvCard({ autoFocus = false, item, onSelect, size = "default" }) {
         {badgeText && (
           <span className="card-badge card-badge--live">{badgeText}</span>
         )}
-        <span className="poster-initials">{initials}</span>
+        {!item.image && <span className="poster-initials">{initials}</span>}
       </span>
 
       <span className="card-copy">

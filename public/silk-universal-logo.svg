@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 160" role="img" aria-label="Silk Universal">
+  <rect width="640" height="160" fill="none"/>
+  <g transform="translate(12 34)">
+    <path d="M28 0h178v92H28C12.5 92 0 79.5 0 64V28C0 12.5 12.5 0 28 0Z" fill="#2764b7"/>
+    <path d="M214 0h374c15.5 0 28 12.5 28 28v36c0 15.5-12.5 28-28 28H214Z" fill="#2bb8e8"/>
+    <rect x="206" width="8" height="92" fill="#020617"/>
+    <text
+      x="27"
+      y="62"
+      fill="#ffffff"
+      font-family="Noto Sans Georgian, DejaVu Sans, Segoe UI, Arial, sans-serif"
+      font-size="51"
+      font-weight="900"
+      letter-spacing="0"
+    >სილქ</text>
+    <text
+      x="230"
+      y="62"
+      fill="#ffffff"
+      font-family="Noto Sans Georgian, DejaVu Sans, Segoe UI, Arial, sans-serif"
+      font-size="51"
+      font-weight="900"
+      letter-spacing="0"
+    >უნივერსალი</text>
+  </g>
+</svg>

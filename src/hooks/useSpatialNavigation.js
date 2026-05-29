@@ -166,7 +166,10 @@ export function useSpatialNavigation(onBack, routeKey, enabled = true) {
         nextElement?.focus({ preventScroll: true });
         markFocusedElement(nextElement);
 
-        if (lastScrolledElement !== nextElement || now - lastScrollAt > 320) {
+        if (
+          !nextElement.closest(".home-page--simple") &&
+          (lastScrolledElement !== nextElement || now - lastScrollAt > 320)
+        ) {
           lastScrolledElement = nextElement;
           lastScrollAt = now;
           nextElement.scrollIntoView({

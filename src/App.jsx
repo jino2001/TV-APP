@@ -7,6 +7,7 @@ import SplashScreen from "./pages/SplashScreen.jsx";
 import { TV_PERFORMANCE_MODE } from "./config/performance.js";
 import { contentItems } from "./data/content.js";
 import { useSpatialNavigation } from "./hooks/useSpatialNavigation.js";
+import { saveLastChannelId } from "./utils/storage.js";
 import { getActiveChannels, getChannelByNumber } from "./utils/channelUtils.js";
 import { getRemoteKey, handledRemoteActions } from "./utils/remoteKeys.js";
 
@@ -39,6 +40,7 @@ export default function App() {
       }
 
       setScreen({ page: "player", contentId });
+      saveLastChannelId(contentId);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     },
     [channels],
